@@ -163,7 +163,7 @@ const Reports = React.memo(() => {
           console.warn('Optimized session metrics not available, using fallback:', error);
           // Fallback to original query logic
           return generateSessionsReport();
-        }
+    }
       },
       staleTime: CACHE_STRATEGIES.REPORTS.session_metrics,
       enabled: !!startDate && !!endDate,
@@ -317,7 +317,7 @@ const Reports = React.memo(() => {
       endDate: format(endDate, 'yyyy-MM-dd'),
     }));
   }, [filters.dateRange]);
-
+    
   // Use effect with proper dependencies
   useEffect(() => {
     updateDateRange();

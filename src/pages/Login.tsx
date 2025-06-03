@@ -1,15 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link, useLocation } from 'react-router-dom';
-import { Calendar, AlertCircle } from 'lucide-react';
+import { Calendar, AlertCircle, Wrench } from 'lucide-react';
 import { useAuth } from '../lib/auth';
-import { showError } from '../lib/toast';
+import { showError, showSuccess } from '../lib/toast';
 import { verifyConnection } from '../lib/supabase';
+import { fixAuthenticationDirectly } from '../lib/databaseFix';
 
 export default function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [fixingDatabase, setFixingDatabase] = useState(false);
   const [connectionVerified, setConnectionVerified] = useState(false);
   const [connectionChecking, setConnectionChecking] = useState(true);
   const navigate = useNavigate();
@@ -64,6 +66,27 @@ export default function Login() {
     }
   };
 
+  const handleFixDatabase = async () => {
+    try {
+      setFixingDatabase(true);
+      setError('');
+      
+      showSuccess('Attempting to fix database authentication functions...');
+      const success = await fixAuthenticationDirectly();
+      
+      if (success) {
+        showSuccess('Database fix completed! Please try logging in again.');
+      } else {
+        showError('Database fix failed. Please contact support.');
+      }
+    } catch (err) {
+      console.error('Database fix error:', err);
+      showError('Database fix failed. Please contact support.');
+    } finally {
+      setFixingDatabase(false);
+    }
+  };
+
   if (connectionChecking) {
     return (
       <div className="min-h-screen bg-gray-50 dark:bg-dark flex flex-col justify-center py-12 sm:px-6 lg:px-8">
@@ -98,11 +121,43 @@ export default function Login() {
 
       <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
         <div className="bg-white dark:bg-dark-lighter py-8 px-4 shadow sm:rounded-lg sm:px-10">
+          {/* Database Fix Section - Temporary */}
+          {error && error.includes('operator does not exist') && (
+            <div className="mb-6 p-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg">
+              <div className="flex items-start">
+                <Wrench className="h-5 w-5 text-yellow-600 dark:text-yellow-400 mr-2 mt-0.5 flex-shrink-0" />
+                <div>
+                  <h3 className="text-sm font-medium text-yellow-800 dark:text-yellow-300">
+                    Database Authentication Issue Detected
+                  </h3>
+                  <p className="text-sm text-yellow-700 dark:text-yellow-400 mt-1">
+                    There appears to be a database function issue. Click below to attempt an automatic fix.
+                  </p>
+                  <button
+                    onClick={handleFixDatabase}
+                    disabled={fixingDatabase}
+                    className="mt-3 inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded text-yellow-700 bg-yellow-100 hover:bg-yellow-200 dark:text-yellow-200 dark:bg-yellow-800 dark:hover:bg-yellow-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <Wrench className="h-3 w-3 mr-1" />
+                    {fixingDatabase ? 'Fixing...' : 'Fix Database Functions'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           <form onSubmit={handleSubmit} className="space-y-6">
             {error && (
               <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 px-4 py-3 rounded-lg flex items-start" role="alert">
                 <AlertCircle className="h-5 w-5 mr-2 mt-0.5 flex-shrink-0" />
-                <span className="block">{error}</span>
+                <div>
+                  <span className="block">{error}</span>
+                  {error.includes('operator does not exist') && (
+                    <p className="text-xs mt-1 text-red-600 dark:text-red-400">
+                      This is a database function issue that can be automatically fixed.
+                    </p>
+                  )}
+                </div>
               </div>
             )}
             
@@ -145,7 +200,7 @@ export default function Login() {
             <div>
               <button
                 type="submit"
-                disabled={loading || !connectionVerified}
+                disabled={loading || !connectionVerified || fixingDatabase}
                 className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 cursor-pointer dark:bg-blue-700 dark:hover:bg-blue-800"
               >
                 {loading ? 'Signing in...' : 'Sign in'}

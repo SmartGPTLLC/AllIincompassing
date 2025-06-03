@@ -1,0 +1,13 @@
+{
+  "access_token": "mock-access-token",
+  "token_type": "Bearer",
+  "expires_in": 3600,
+  "refresh_token": "mock-refresh-token",
+  "user": {
+    "id": "mock-user-id",
+    "email": "test@example.com",
+    "user_metadata": {
+      "full_name": "Test User"
+    }
+  }
+} 
