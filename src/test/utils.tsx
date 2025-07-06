@@ -1,38 +1,77 @@
 import React from 'react';
-import { render } from '@testing-library/react';
-import { BrowserRouter } from 'react-router-dom';
+import { render, RenderOptions } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { Toaster } from 'react-hot-toast';
+import { vi } from 'vitest';
 import userEvent from '@testing-library/user-event';
 
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      retry: false,
-      cacheTime: 0,
-      staleTime: 0,
+// Create a test query client
+const createTestQueryClient = () => {
+  return new QueryClient({
+    defaultOptions: {
+      queries: {
+        retry: false,
+        gcTime: 0,
+        staleTime: 0,
+      },
+      mutations: {
+        retry: false,
+      },
     },
-  },
-  logger: {
-    log: console.log,
-    warn: console.warn,
-    error: () => {},
-  },
-});
+  });
+};
 
-export function renderWithProviders(ui: React.ReactElement) {
-  return {
-    ...render(
-      <QueryClientProvider client={queryClient}>
-        <BrowserRouter>
-          {ui}
-          <Toaster />
-        </BrowserRouter>
-      </QueryClientProvider>
-    ),
-    queryClient,
-  };
-}
+// Wrapper component that provides all necessary context
+const TestProviders = ({ children }: { children: React.ReactNode }) => {
+  const queryClient = createTestQueryClient();
+  
+  return (
+    <QueryClientProvider client={queryClient}>
+      {children}
+    </QueryClientProvider>
+  );
+};
 
+// Custom render function that includes providers
+const renderWithProviders = (
+  ui: React.ReactElement,
+  options?: Omit<RenderOptions, 'wrapper'>
+) => {
+  return render(ui, { wrapper: TestProviders, ...options });
+};
+
+// Mock Supabase client
+export const mockSupabaseClient = {
+  from: vi.fn(() => ({
+    select: vi.fn(() => ({
+      data: [],
+      error: null,
+    })),
+    insert: vi.fn(() => ({
+      data: [],
+      error: null,
+    })),
+    update: vi.fn(() => ({
+      data: [],
+      error: null,
+    })),
+    delete: vi.fn(() => ({
+      data: [],
+      error: null,
+    })),
+    eq: vi.fn(() => ({
+      data: [],
+      error: null,
+    })),
+  })),
+  auth: {
+    getUser: vi.fn(() => Promise.resolve({
+      data: { user: { id: 'test-user', email: 'test@example.com' } },
+      error: null,
+    })),
+  },
+};
+
+// Re-export testing library utilities
 export * from '@testing-library/react';
 export { userEvent };
+export { renderWithProviders }; 

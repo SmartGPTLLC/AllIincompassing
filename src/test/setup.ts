@@ -1,52 +1,108 @@
-import '@testing-library/jest-dom';
-import { afterAll, afterEach, beforeAll, vi } from 'vitest';
+import { vi, beforeAll, afterEach, afterAll } from 'vitest';
 import { setupServer } from 'msw/node';
-import { handlers } from './mocks/handlers';
+import { http, HttpResponse } from 'msw';
+import '@testing-library/jest-dom';
 
-// Mock Supabase environment variables
-vi.stubEnv('VITE_SUPABASE_URL', 'https://example.supabase.co');
-vi.stubEnv('VITE_SUPABASE_ANON_KEY', 'example-anon-key');
+// Mock Supabase
+vi.mock('../lib/supabase', () => ({
+  supabase: {
+    from: vi.fn(() => ({
+      select: vi.fn(() => ({
+        data: [],
+        error: null,
+      })),
+      insert: vi.fn(() => ({
+        data: [],
+        error: null,
+      })),
+      update: vi.fn(() => ({
+        data: [],
+        error: null,
+      })),
+      delete: vi.fn(() => ({
+        data: [],
+        error: null,
+      })),
+      eq: vi.fn(() => ({
+        data: [],
+        error: null,
+      })),
+    })),
+    auth: {
+      getUser: vi.fn(() => Promise.resolve({
+        data: { user: { id: 'test-user', email: 'test@example.com' } },
+        error: null,
+      })),
+    },
+  },
+}));
 
-// Create MSW server instance
-export const server = setupServer(...handlers);
+// Note: date-fns mocking removed for simplicity
+
+// Setup MSW server for mocking API calls
+export const server = setupServer(
+  // Mock RPC endpoints that the app actually uses
+  http.post('*/rest/v1/rpc/get_schedule_data_batch', () => {
+    return HttpResponse.json({
+      sessions: [],
+      therapists: [],
+      clients: []
+    });
+  }),
+  http.post('*/rest/v1/rpc/get_sessions_optimized', () => {
+    return HttpResponse.json([]);
+  }),
+  http.post('*/rest/v1/rpc/get_dropdown_data', () => {
+    return HttpResponse.json({
+      therapists: [],
+      clients: []
+    });
+  }),
+  // Legacy REST endpoints for backward compatibility
+  http.get('*/rest/v1/sessions*', () => {
+    return HttpResponse.json([]);
+  }),
+  http.get('*/rest/v1/therapists*', () => {
+    return HttpResponse.json([]);
+  }),
+  http.get('*/rest/v1/clients*', () => {
+    return HttpResponse.json([]);
+  }),
+  // Mock session creation
+  http.post('*/rest/v1/sessions*', () => {
+    return HttpResponse.json({ id: 'new-session-id' });
+  }),
+);
 
 // Start server before all tests
 beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
 
 // Reset handlers after each test
-afterEach(() => {
-  server.resetHandlers();
-  vi.clearAllMocks();
-});
+afterEach(() => server.resetHandlers());
 
-// Clean up after all tests
+// Close server after all tests
 afterAll(() => server.close());
 
-// Mock window.matchMedia
+// Mock window.matchMedia for responsive design tests
 Object.defineProperty(window, 'matchMedia', {
   writable: true,
   value: vi.fn().mockImplementation(query => ({
     matches: false,
     media: query,
     onchange: null,
-    addListener: vi.fn(),
-    removeListener: vi.fn(),
+    addListener: vi.fn(), // deprecated
+    removeListener: vi.fn(), // deprecated
     addEventListener: vi.fn(),
     removeEventListener: vi.fn(),
     dispatchEvent: vi.fn(),
   })),
 });
 
-// Mock ResizeObserver
-global.ResizeObserver = class ResizeObserver {
-  observe() {}
-  unobserve() {}
-  disconnect() {}
-};
-
-// Mock IntersectionObserver
-global.IntersectionObserver = class IntersectionObserver {
-  observe() {}
-  unobserve() {}
-  disconnect() {}
-};
+// Mock IntersectionObserver for virtual scrolling tests
+const mockIntersectionObserver = vi.fn();
+mockIntersectionObserver.mockReturnValue({
+  observe: () => null,
+  unobserve: () => null,
+  disconnect: () => null,
+});
+window.IntersectionObserver = mockIntersectionObserver; 

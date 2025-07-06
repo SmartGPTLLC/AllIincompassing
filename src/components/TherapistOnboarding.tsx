@@ -1,16 +1,19 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useForm, Controller } from 'react-hook-form';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { 
-  User, Mail, Calendar, Phone, MapPin, 
-  FileText, CheckCircle, ArrowRight, ArrowLeft,
-  Upload, Shield, AlertCircle, RefreshCw,
-  Briefcase, Award, Building2
+import {
+  CheckCircle,
+  ArrowRight,
+  ArrowLeft,
+  Upload,
+  AlertCircle,
+  RefreshCw,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { showSuccess, showError } from '../lib/toast';
 import AvailabilityEditor from './AvailabilityEditor';
+import { OnboardingSteps } from './OnboardingSteps';
 import type { Therapist } from '../types';
 import { prepareFormData } from '../lib/validation';
 
@@ -92,7 +95,7 @@ export default function TherapistOnboarding({ onComplete }: TherapistOnboardingP
   // Parse query parameters
   const queryParams = new URLSearchParams(location.search);
   
-  const { register, handleSubmit, control, setValue, watch, formState: { errors } } = useForm<OnboardingFormData>({
+  const { register, handleSubmit, control, formState: { errors } } = useForm<OnboardingFormData>({
     defaultValues: {
       email: queryParams.get('email') || '',
       first_name: queryParams.get('first_name') || '',
@@ -115,21 +118,9 @@ export default function TherapistOnboarding({ onComplete }: TherapistOnboardingP
       // Prepare therapist data with proper formatting
       const formattedTherapist = {
         ...formattedData,
-        service_type: Array.isArray(formattedData.service_type) 
-          ? (formattedData.service_type.length > 0 ? formattedData.service_type : null)
-          : typeof formattedData.service_type === 'string'
-            ? formattedData.service_type.split(',').map(s => s.trim()).filter(Boolean)
-            : null,
-        specialties: Array.isArray(formattedData.specialties)
-          ? (formattedData.specialties.length > 0 ? formattedData.specialties : null)
-          : typeof formattedData.specialties === 'string'
-            ? formattedData.specialties.split(',').map(s => s.trim()).filter(Boolean)
-            : null,
-        preferred_areas: Array.isArray(formattedData.preferred_areas)
-          ? (formattedData.preferred_areas.length > 0 ? formattedData.preferred_areas : null)
-          : typeof formattedData.preferred_areas === 'string'
-            ? formattedData.preferred_areas.split(',').map(s => s.trim()).filter(Boolean)
-            : null,
+        service_type: formattedData.service_type,
+        specialties: formattedData.specialties,
+        preferred_areas: formattedData.preferred_areas,
         full_name: `${formattedData.first_name} ${formattedData.middle_name || ''} ${formattedData.last_name}`.trim()
       };
 
@@ -182,6 +173,32 @@ export default function TherapistOnboarding({ onComplete }: TherapistOnboardingP
   };
 
   const handleFormSubmit = async (data: OnboardingFormData) => {
+    // Validate required fields
+    if (!data.first_name?.trim()) {
+      showError('First name is required');
+      return;
+    }
+    
+    if (!data.last_name?.trim()) {
+      showError('Last name is required');
+      return;
+    }
+    
+    if (!data.email?.trim()) {
+      showError('Email is required');
+      return;
+    }
+    
+    // Ensure service_type is an array
+    if (!data.service_type || !Array.isArray(data.service_type)) {
+      data.service_type = [];
+    }
+    
+    // Ensure specialties is an array
+    if (!data.specialties || !Array.isArray(data.specialties)) {
+      data.specialties = [];
+    }
+    
     setIsSubmitting(true);
     try {
       await createTherapistMutation.mutateAsync(data);
@@ -209,11 +226,11 @@ export default function TherapistOnboarding({ onComplete }: TherapistOnboardingP
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  First Name*
+                  First Name
                 </label>
                 <input
                   type="text"
-                  {...register('first_name', { required: 'First name is required' })}
+                  {...register('first_name')}
                   className="w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:bg-dark dark:text-gray-200"
                 />
                 {errors.first_name && (
@@ -234,11 +251,11 @@ export default function TherapistOnboarding({ onComplete }: TherapistOnboardingP
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Last Name*
+                  Last Name
                 </label>
                 <input
                   type="text"
-                  {...register('last_name', { required: 'Last name is required' })}
+                  {...register('last_name')}
                   className="w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:bg-dark dark:text-gray-200"
                 />
                 {errors.last_name && (
@@ -250,17 +267,11 @@ export default function TherapistOnboarding({ onComplete }: TherapistOnboardingP
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Email*
+                  Email
                 </label>
                 <input
                   type="email"
-                  {...register('email', { 
-                    required: 'Email is required',
-                    pattern: {
-                      value: /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i,
-                      message: 'Invalid email address',
-                    },
-                  })}
+                  {...register('email')}
                   className="w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:bg-dark dark:text-gray-200"
                 />
                 {errors.email && (
@@ -782,46 +793,22 @@ export default function TherapistOnboarding({ onComplete }: TherapistOnboardingP
       <div className="bg-white dark:bg-dark-lighter shadow rounded-lg p-6 mb-6">
         <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-6">Therapist Onboarding</h1>
         
-        {/* Progress Steps */}
-        <div className="mb-8">
-          <div className="flex items-center justify-between">
-            {[1, 2, 3, 4, 5].map(step => (
-              <div 
-                key={step}
-                className={`flex items-center justify-center w-10 h-10 rounded-full ${
-                  step < currentStep
-                    ? 'bg-blue-600 text-white'
-                    : step === currentStep
-                      ? 'bg-blue-100 dark:bg-blue-900/20 text-blue-800 dark:text-blue-200 border-2 border-blue-600'
-                      : 'bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400'
-                }`}
-              >
-                {step < currentStep ? (
-                  <CheckCircle className="w-6 h-6" />
-                ) : (
-                  <span>{step}</span>
-                )}
-              </div>
-            ))}
-          </div>
-          <div className="flex justify-between mt-2 text-xs text-gray-500 dark:text-gray-400">
-            <span>Basic Info</span>
-            <span>Professional</span>
-            <span>Address</span>
-            <span>Services</span>
-            <span>Documents</span>
-          </div>
-        </div>
+        <OnboardingSteps
+          labels={['Basic Info', 'Professional', 'Address', 'Services', 'Documents']}
+          currentStep={currentStep}
+        />
         
         <form onSubmit={handleSubmit(handleFormSubmit)}>
           {renderStepContent()}
           
           <div className="mt-8 flex justify-between">
             <button
-              type="button"
-              onClick={prevStep}
-              disabled={currentStep === 1}
+             type="button"
+             onClick={onClose}
+             className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-dark border border-gray-300 dark:border-gray-600 rounded-md shadow-sm hover:bg-gray-50 dark:hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+             aria-label="Cancel"
               className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-dark border border-gray-300 dark:border-gray-600 rounded-md shadow-sm hover:bg-gray-50 dark:hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 flex items-center"
+              aria-label="Add Certification"
             >
               <ArrowLeft className="w-4 h-4 mr-2" />
               Previous

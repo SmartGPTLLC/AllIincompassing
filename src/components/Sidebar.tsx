@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
-import { NavLink } from 'react-router-dom';
+import { NavLink, useNavigate, Link } from 'react-router-dom';
 import { 
   Calendar, Users, FileText, CreditCard, LayoutDashboard, 
   UserCog, LogOut, Settings, MessageSquare, Sun, Moon, 
-  FileCheck, Menu, X, RefreshCw, User, BarChart
+  FileCheck, Menu, X, RefreshCw, User, BarChart, Activity
 } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import { useTheme } from '../lib/theme';
@@ -13,9 +13,14 @@ import ThemeToggle from './ThemeToggle';
 export default function Sidebar() {
   const { signOut, hasRole, user, roles, refreshSession } = useAuth();
   const { isDark } = useTheme();
-  const [isSigningOut, setIsSigningOut] = React.useState(false);
+  const [isSigningOut, setIsSigningOut] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const navigate = useNavigate();
+
+  // Check if user is a therapist
+  const isTherapist = hasRole('therapist') || user?.user_metadata?.therapist_id;
+  const therapistId = user?.user_metadata?.therapist_id;
 
   const handleSignOut = async () => {
     if (isSigningOut) return;
@@ -23,10 +28,12 @@ export default function Sidebar() {
     try {
       setIsSigningOut(true);
       await signOut();
-      // No need to navigate here as signOut function now handles redirection
+      // The signOut function now handles redirection
     } catch (error) {
       console.error('Error signing out:', error);
       setIsSigningOut(false);
+      // Force navigation to login page even if there's an error
+      navigate('/login');
     }
   };
 
@@ -96,6 +103,12 @@ export default function Sidebar() {
       roles: ['admin']
     },
     { 
+      icon: Activity, 
+      label: 'Monitoring', 
+      path: '/monitoring', 
+      roles: ['admin']
+    },
+    { 
       icon: Settings, 
       label: 'Settings', 
       path: '/settings', 
@@ -137,9 +150,14 @@ export default function Sidebar() {
         <div className="px-6 py-2 border-b border-gray-200 dark:border-gray-700">
           <div className="flex items-center mb-2">
             <User className="h-5 w-5 text-gray-500 dark:text-gray-400 mr-2" />
-            <span className="text-sm font-medium text-gray-700 dark:text-gray-300 truncate">
-              {user?.email}
-            </span>
+            <div className="text-sm font-medium text-gray-700 dark:text-gray-300 truncate">
+              <div>{user?.email}</div>
+              {isTherapist && therapistId && (
+                <div className="text-xs text-blue-600 dark:text-blue-400">
+                  Therapist Account
+                </div>
+              )}
+            </div>
           </div>
           <div className="flex items-center justify-between">
             <div className="text-xs text-gray-500 dark:text-gray-400">
@@ -155,6 +173,19 @@ export default function Sidebar() {
             </button>
           </div>
         </div>
+        
+        {/* Therapist quick link */}
+        {isTherapist && therapistId && (
+          <div className="border-b dark:border-gray-700 px-4 py-2">
+            <Link
+              to={`/therapists/${therapistId}`}
+              className="flex items-center w-full px-4 py-2 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 rounded-lg transition-colors"
+            >
+              <User className="h-5 w-5 mr-3 text-blue-600 dark:text-blue-400" />
+              My Profile
+            </Link>
+          </div>
+        )}
         
         <nav className="flex-1 space-y-1 px-4 py-4">
           {navItems.map(({ icon: Icon, label, path, roles }) => {

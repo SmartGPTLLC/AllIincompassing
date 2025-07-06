@@ -1,5 +1,16 @@
-import { OpenAI } from "npm:openai@4.28.0";
-import { createClient } from "npm:@supabase/supabase-js@2.39.7";
+import { OpenAI } from "npm:openai@5.5.1";
+import { createClient } from "npm:@supabase/supabase-js@2.50.0";
+
+// Initialize OpenAI client
+const openai = new OpenAI({
+  apiKey: Deno.env.get("OPENAI_API_KEY"),
+});
+
+// Initialize Supabase client
+const supabaseClient = createClient(
+  Deno.env.get("SUPABASE_URL") ?? '',
+  Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? '',
+);
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -30,6 +41,7 @@ interface OptimizedAIResponse {
 
 // ============================================================================
 // OPTIMIZED AI CONFIGURATION (Phase 4)
+// Updated: Fixed buildContext reference issue
 // ============================================================================
 
 // Enhanced GPT-4o configuration for business logic
@@ -201,6 +213,24 @@ const compressedFunctionSchemas = [
           data: { type: "object", description: "Entity data" }
         },
         required: ["action", "data"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_monthly_session_count",
+      description: "Get total number of sessions for a specified date range",
+      parameters: {
+        type: "object",
+        properties: {
+          start_date: { type: "string", format: "date", description: "Start date (YYYY-MM-DD)" },
+          end_date: { type: "string", format: "date", description: "End date (YYYY-MM-DD)" },
+          therapist_id: { type: "string", description: "Optional filter by therapist" },
+          client_id: { type: "string", description: "Optional filter by client" },
+          status: { type: "string", description: "Optional filter by status" }
+        },
+        required: ["start_date", "end_date"]
       }
     }
   }
@@ -408,22 +438,16 @@ async function generateProactiveSuggestions(context: { summary?: { userRole?: st
 // OPTIMIZED AI PROCESSING
 // ============================================================================
 
-// Initialize OpenAI with optimized configuration
-const openai = new OpenAI({
-  apiKey: Deno.env.get("OPENAI_API_KEY"),
-});
-
-// Initialize Supabase client
-const supabaseClient = createClient(
-  Deno.env.get("SUPABASE_URL") ?? '',
-  Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? '',
-);
-
 async function processOptimizedMessage(
   message: string,
-  context: Record<string, unknown>
+  context: Record<string, unknown> 
 ): Promise<OptimizedAIResponse> {
   const startTime = performance.now();
+  console.log("Processing message with context:", JSON.stringify({
+    message_length: message.length,
+    has_conversation_id: !!context.conversationId,
+    conversation_id: context.conversationId
+  }));
   
   try {
     // Step 1: Check cache for similar queries
@@ -440,6 +464,7 @@ async function processOptimizedMessage(
     
     // Step 2: Build optimized context
     const optimizedContext = await buildOptimizedContext(context.userRoles as string[] || [], context.conversationId as string);
+    console.log("Built optimized context with history items:", optimizedContext.recentActions?.length || 0);
     
     // Step 3: Generate proactive suggestions
     const suggestions = await generateProactiveSuggestions(optimizedContext);
@@ -463,6 +488,10 @@ TIME: ${optimizedContext.currentTime}`;
     const responseMessage = completion.choices[0].message;
     const responseTime = performance.now() - startTime;
     
+    // Get conversation ID - either from incoming context or create a new one
+    const conversationId = context.conversationId as string || 
+                          (await saveChatMessage('user', message, context)).toString();
+    
     // Step 6: Process function calls
     let action;
     if (responseMessage.tool_calls && responseMessage.tool_calls.length > 0) {
@@ -477,10 +506,61 @@ TIME: ${optimizedContext.currentTime}`;
         functionArgs.date = new Date(Date.now() + 86400000).toISOString().split('T')[0];
       }
       
-      action = {
-        type: functionName,
-        data: functionArgs
-      };
+      // Handle get_monthly_session_count function call
+      if (functionName === "get_monthly_session_count") {
+        try {
+          const { start_date, end_date, therapist_id, client_id, status } = functionArgs;
+          
+          // Call the session metrics RPC to get the data
+          const { data: sessionData, error } = await supabaseClient.rpc('get_session_metrics', {
+            p_start_date: start_date,
+            p_end_date: end_date,
+            p_therapist_id: therapist_id || null,
+            p_client_id: client_id || null,
+            p_status: status || null
+          });
+          
+          if (error) throw error;
+          
+          // Calculate date range description
+          const startDateObj = new Date(start_date);
+          const endDateObj = new Date(end_date);
+          const sameMonth = startDateObj.getMonth() === endDateObj.getMonth() && 
+                            startDateObj.getFullYear() === endDateObj.getFullYear();
+          
+          const monthName = startDateObj.toLocaleString('default', { month: 'long' });
+          const dateRangeText = sameMonth 
+            ? `${monthName} ${startDateObj.getFullYear()}`
+            : `${startDateObj.toLocaleDateString('default', { month: 'short', day: 'numeric' })} to ${endDateObj.toLocaleDateString('default', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+          
+          // Generate natural language response
+          const totalSessions = sessionData?.totalSessions || 0;
+          const completedSessions = sessionData?.completedSessions || 0;
+          const pendingSessions = sessionData?.scheduledSessions || 0;
+          
+          // Update the response message
+          responseMessage.content = `For ${dateRangeText}, there ${totalSessions === 1 ? 'is' : 'are'} ${totalSessions} ${totalSessions === 1 ? 'session' : 'sessions'} ${
+            therapist_id ? 'for this therapist' : 
+            client_id ? 'for this client' : 
+            'scheduled'
+          }.${
+            completedSessions > 0 ? ` ${completedSessions} ${completedSessions === 1 ? 'session has' : 'sessions have'} been completed.` : ''
+          }${
+            pendingSessions > 0 ? ` ${pendingSessions} ${pendingSessions === 1 ? 'session is' : 'sessions are'} still pending.` : ''
+          }`;
+        } catch (error) {
+          console.error('Error getting session counts:', error);
+          responseMessage.content = "I'm sorry, I couldn't retrieve the session counts. There might be an issue with the database connection.";
+        }
+        
+        // Don't set action since we've directly updated the response
+        action = null;
+      } else {
+        action = {
+          type: functionName,
+          data: functionArgs
+        };
+      }
     }
     
     const response: OptimizedAIResponse = {
@@ -488,6 +568,7 @@ TIME: ${optimizedContext.currentTime}`;
       action,
       cacheHit: false,
       responseTime,
+      conversationId,
       tokenUsage: completion.usage ? {
         prompt: completion.usage.prompt_tokens,
         completion: completion.usage.completion_tokens,
@@ -508,10 +589,10 @@ TIME: ${optimizedContext.currentTime}`;
     // Step 8: Save to chat history
     await saveChatMessage(
       'user',
-      message,
-      context,
+      message, 
+      context, 
       undefined,
-      context.conversationId as string
+      conversationId
     );
     
     await saveChatMessage(
@@ -519,7 +600,7 @@ TIME: ${optimizedContext.currentTime}`;
       responseMessage.content || "I'll help you with that.",
       { optimized: true, cacheHit: false, responseTime },
       action,
-      context.conversationId as string
+      conversationId
     );
     
     return response;
@@ -529,6 +610,7 @@ TIME: ${optimizedContext.currentTime}`;
     
     return {
       response: "I apologize, but I'm experiencing technical difficulties. Please try again or use the manual interface.",
+      conversationId: context.conversationId as string,
       responseTime: performance.now() - startTime
     };
   }
@@ -540,9 +622,23 @@ async function saveChatMessage(
   context: Record<string, unknown> = {},
   action?: { type: string; data: Record<string, unknown> },
   conversationId?: string
-): Promise<string | undefined> {
+): Promise<string> {
   try {
-    const { data, error } = await supabaseClient
+    // If no conversation ID, create a new conversation first
+    let actualConversationId = conversationId;
+    if (!actualConversationId) {
+      const { data: convData, error: convError } = await supabaseClient
+        .from('conversations')
+        .insert({ user_id: null, title: "New Conversation" })
+        .select('id')
+        .single();
+      
+      if (convError) throw convError;
+      actualConversationId = convData.id;
+    }
+    
+    // Now insert the message with the conversation ID
+    const { data: msgData, error: msgError } = await supabaseClient
       .from('chat_history')
       .insert({
         role,
@@ -550,16 +646,16 @@ async function saveChatMessage(
         context,
         action_type: action?.type,
         action_data: action?.data,
-        conversation_id: conversationId || undefined
+        conversation_id: actualConversationId
       })
       .select('conversation_id')
       .single();
 
-    if (error) throw error;
-    return data?.conversation_id;
+    if (msgError) throw msgError;
+    return msgData.conversation_id;
   } catch (error) {
     console.error('Error saving chat message:', error);
-    return undefined;
+    return conversationId || crypto.randomUUID();
   }
 }
 

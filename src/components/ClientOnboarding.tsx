@@ -1,15 +1,19 @@
-import React, { useState, useEffect } from 'react';
-import { useForm, Controller } from 'react-hook-form';
+import React, { useState } from 'react';
+import { useForm, Controller, useFormState } from 'react-hook-form';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { 
-  User, Mail, Calendar, Phone, MapPin, 
-  FileText, CheckCircle, ArrowRight, ArrowLeft,
-  Upload, Shield, AlertCircle, RefreshCw
+import {
+  CheckCircle,
+  ArrowRight,
+  ArrowLeft,
+  Upload,
+  AlertCircle,
+  RefreshCw,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { showSuccess, showError } from '../lib/toast';
 import AvailabilityEditor from './AvailabilityEditor';
+import { OnboardingSteps } from './OnboardingSteps';
 import type { Client } from '../types';
 import { prepareFormData } from '../lib/validation';
 
@@ -50,7 +54,7 @@ interface OnboardingFormData {
 
   // Service Information
   service_preference: string[];
-  insurance_info?: Record<string, any>;
+  insurance_info?: Record<string, unknown>;
   referral_source?: string;
   one_to_one_units?: number;
   supervision_units?: number;
@@ -84,6 +88,8 @@ export default function ClientOnboarding({ onComplete }: ClientOnboardingProps) 
   const [currentStep, setCurrentStep] = useState(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [uploadedFiles, setUploadedFiles] = useState<Record<string, File>>({});
+  const [emailValidationError, setEmailValidationError] = useState<string>('');
+  const [isValidatingEmail, setIsValidatingEmail] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
@@ -91,7 +97,7 @@ export default function ClientOnboarding({ onComplete }: ClientOnboardingProps) 
   // Parse query parameters
   const queryParams = new URLSearchParams(location.search);
   
-  const { register, handleSubmit, control, setValue, watch, formState: { errors } } = useForm<OnboardingFormData>({
+  const { register, handleSubmit, control, formState: { errors } } = useForm<OnboardingFormData>({
     defaultValues: {
       email: queryParams.get('email') || '',
       first_name: queryParams.get('first_name') || '',
@@ -107,6 +113,53 @@ export default function ClientOnboarding({ onComplete }: ClientOnboardingProps) 
     }
   });
 
+  // Check if email already exists in database
+  const checkEmailExists = async (email: string): Promise<boolean> => {
+    if (!email.trim()) return false;
+    
+    try {
+      const { data, error } = await supabase
+        .from('clients')
+        .select('id')
+        .eq('email', email.toLowerCase().trim())
+        .limit(1);
+      
+      if (error) {
+        console.error('Error checking email:', error);
+        return false;
+      }
+      
+      return data && data.length > 0;
+    } catch (error) {
+      console.error('Error checking email:', error);
+      return false;
+    }
+  };
+
+  const validateEmail = async (email: string) => {
+    if (!email || !email.trim()) {
+      setEmailValidationError('');
+      return;
+    }
+
+    setIsValidatingEmail(true);
+    setEmailValidationError('');
+
+    try {
+      const exists = await checkEmailExists(email);
+      if (exists) {
+        setEmailValidationError('A client with this email address already exists');
+      } else {
+        setEmailValidationError('');
+      }
+    } catch (error) {
+      console.error('Error validating email:', error);
+      setEmailValidationError('Unable to validate email. Please try again.');
+    } finally {
+      setIsValidatingEmail(false);
+    }
+  };
+
   const createClientMutation = useMutation({
     mutationFn: async (data: Partial<Client>) => {
       // Format data for submission
@@ -115,13 +168,12 @@ export default function ClientOnboarding({ onComplete }: ClientOnboardingProps) 
       // Prepare client data with proper formatting
       const formattedClient = {
         ...formattedData,
-        service_preference: Array.isArray(formattedData.service_preference) 
-          ? (formattedData.service_preference.length > 0 ? formattedData.service_preference : null)
-          : typeof formattedData.service_preference === 'string'
-            ? formattedData.service_preference.split(',').map(s => s.trim()).filter(Boolean)
-            : null,
+        service_preference: formattedData.service_preference || [],
+        insurance_info: formattedData.insurance_info || {},
         full_name: `${formattedData.first_name} ${formattedData.middle_name || ''} ${formattedData.last_name}`.trim()
       };
+
+      console.log("Submitting client data:", formattedClient);
 
       // Insert client data
       const { data: client, error } = await supabase
@@ -130,7 +182,12 @@ export default function ClientOnboarding({ onComplete }: ClientOnboardingProps) 
         .select()
         .single();
 
-      if (error) throw error;
+      if (error) {
+        console.error("Supabase insert error:", error);
+        throw error;
+      }
+
+      console.log("Client created successfully:", client);
 
       // Handle file uploads if any
       for (const [key, file] of Object.entries(uploadedFiles)) {
@@ -157,6 +214,7 @@ export default function ClientOnboarding({ onComplete }: ClientOnboardingProps) 
       }
     },
     onError: (error) => {
+      console.error("Mutation error:", error);
       showError(error);
       setIsSubmitting(false);
     }
@@ -172,8 +230,32 @@ export default function ClientOnboarding({ onComplete }: ClientOnboardingProps) 
   };
 
   const handleFormSubmit = async (data: OnboardingFormData) => {
+    console.log("Form submitted with data:", data);
+    
+    // Only check email validation error if an email was provided
+    if (emailValidationError) {
+      showError('Please resolve the email validation error before submitting');
+      return;
+    }
+    
+    // Double-check email uniqueness before submission
+    if (data.email && data.email.trim()) {
+      const emailExists = await checkEmailExists(data.email);
+      if (emailExists) {
+        setEmailValidationError('A client with this email address already exists');
+        showError('A client with this email address already exists');
+        return;
+      }
+    }
+    
+    // Ensure service_preference is an array
+    if (!Array.isArray(data.service_preference)) {
+      data.service_preference = [];
+    }
+    
     setIsSubmitting(true);
     try {
+      console.log("Starting client creation mutation");
       await createClientMutation.mutateAsync(data);
     } catch (error) {
       console.error('Error submitting form:', error);
@@ -199,11 +281,11 @@ export default function ClientOnboarding({ onComplete }: ClientOnboardingProps) 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  First Name*
+                  First Name
                 </label>
                 <input
                   type="text"
-                  {...register('first_name', { required: 'First name is required' })}
+                  {...register('first_name')}
                   className="w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:bg-dark dark:text-gray-200"
                 />
                 {errors.first_name && (
@@ -224,11 +306,11 @@ export default function ClientOnboarding({ onComplete }: ClientOnboardingProps) 
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Last Name*
+                  Last Name
                 </label>
                 <input
                   type="text"
-                  {...register('last_name', { required: 'Last name is required' })}
+                  {...register('last_name')}
                   className="w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:bg-dark dark:text-gray-200"
                 />
                 {errors.last_name && (
@@ -240,11 +322,11 @@ export default function ClientOnboarding({ onComplete }: ClientOnboardingProps) 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Date of Birth*
+                  Date of Birth
                 </label>
                 <input
                   type="date"
-                  {...register('date_of_birth', { required: 'Date of birth is required' })}
+                  {...register('date_of_birth')}
                   className="w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:bg-dark dark:text-gray-200"
                 />
                 {errors.date_of_birth && (
@@ -269,19 +351,23 @@ export default function ClientOnboarding({ onComplete }: ClientOnboardingProps) 
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Email*
+                  Email
                 </label>
                 <input
                   type="email"
-                  {...register('email', { 
-                    required: 'Email is required',
-                    pattern: {
-                      value: /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i,
-                      message: 'Invalid email address',
-                    },
-                  })}
+                  {...register('email')}
+                  onBlur={(e) => validateEmail(e.target.value)}
                   className="w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:bg-dark dark:text-gray-200"
                 />
+                {isValidatingEmail && (
+                  <p className="mt-1 text-sm text-blue-600 dark:text-blue-400 flex items-center">
+                    <RefreshCw className="w-3 h-3 mr-1 animate-spin" />
+                    Checking email availability...
+                  </p>
+                )}
+                {emailValidationError && (
+                  <p className="mt-1 text-sm text-red-600 dark:text-red-400">{emailValidationError}</p>
+                )}
                 {errors.email && (
                   <p className="mt-1 text-sm text-red-600 dark:text-red-400">{errors.email.message}</p>
                 )}
@@ -341,11 +427,11 @@ export default function ClientOnboarding({ onComplete }: ClientOnboardingProps) 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    First Name*
+                    First Name
                   </label>
                   <input
                     type="text"
-                    {...register('parent1_first_name', { required: 'Parent/guardian first name is required' })}
+                    {...register('parent1_first_name')}
                     className="w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:bg-dark dark:text-gray-200"
                   />
                   {errors.parent1_first_name && (
@@ -354,11 +440,11 @@ export default function ClientOnboarding({ onComplete }: ClientOnboardingProps) 
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    Last Name*
+                    Last Name
                   </label>
                   <input
                     type="text"
-                    {...register('parent1_last_name', { required: 'Parent/guardian last name is required' })}
+                    {...register('parent1_last_name')}
                     className="w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:bg-dark dark:text-gray-200"
                   />
                   {errors.parent1_last_name && (
@@ -370,11 +456,11 @@ export default function ClientOnboarding({ onComplete }: ClientOnboardingProps) 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    Phone*
+                    Phone
                   </label>
                   <input
                     type="tel"
-                    {...register('parent1_phone', { required: 'Parent/guardian phone is required' })}
+                    {...register('parent1_phone')}
                     className="w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:bg-dark dark:text-gray-200"
                   />
                   {errors.parent1_phone && (
@@ -395,10 +481,10 @@ export default function ClientOnboarding({ onComplete }: ClientOnboardingProps) 
               
               <div className="mt-4">
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Relationship to Client*
+                  Relationship to Client
                 </label>
                 <select
-                  {...register('parent1_relationship', { required: 'Relationship is required' })}
+                  {...register('parent1_relationship')}
                   className="w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:bg-dark dark:text-gray-200"
                 >
                   <option value="">Select relationship</option>
@@ -490,11 +576,11 @@ export default function ClientOnboarding({ onComplete }: ClientOnboardingProps) 
             <div className="grid grid-cols-1 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Street Address*
+                  Street Address
                 </label>
                 <input
                   type="text"
-                  {...register('address_line1', { required: 'Street address is required' })}
+                  {...register('address_line1')}
                   className="w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:bg-dark dark:text-gray-200"
                 />
                 {errors.address_line1 && (
@@ -502,25 +588,14 @@ export default function ClientOnboarding({ onComplete }: ClientOnboardingProps) 
                 )}
               </div>
               
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Address Line 2
-                </label>
-                <input
-                  type="text"
-                  {...register('address_line2')}
-                  className="w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:bg-dark dark:text-gray-200"
-                />
-              </div>
-              
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    City*
+                    City
                   </label>
                   <input
                     type="text"
-                    {...register('city', { required: 'City is required' })}
+                    {...register('city')}
                     className="w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:bg-dark dark:text-gray-200"
                   />
                   {errors.city && (
@@ -529,11 +604,11 @@ export default function ClientOnboarding({ onComplete }: ClientOnboardingProps) 
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    State*
+                    State
                   </label>
                   <input
                     type="text"
-                    {...register('state', { required: 'State is required' })}
+                    {...register('state')}
                     className="w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:bg-dark dark:text-gray-200"
                   />
                   {errors.state && (
@@ -542,11 +617,11 @@ export default function ClientOnboarding({ onComplete }: ClientOnboardingProps) 
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    ZIP Code*
+                    ZIP Code
                   </label>
                   <input
                     type="text"
-                    {...register('zip_code', { required: 'ZIP code is required' })}
+                    {...register('zip_code')}
                     className="w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:bg-dark dark:text-gray-200"
                   />
                   {errors.zip_code && (
@@ -566,6 +641,50 @@ export default function ClientOnboarding({ onComplete }: ClientOnboardingProps) 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  Service Types
+                </label>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="flex items-center">
+                    <input
+                      type="checkbox"
+                      id="in_clinic"
+                      value="In clinic"
+                      {...register('service_preference')}
+                      className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                    />
+                    <label htmlFor="in_clinic" className="ml-2 block text-sm text-gray-900 dark:text-gray-100">
+                      In Clinic
+                    </label>
+                  </div>
+                  <div className="flex items-center">
+                    <input
+                      type="checkbox"
+                      id="in_home"
+                      value="In home"
+                      {...register('service_preference')}
+                      className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                    />
+                    <label htmlFor="in_home" className="ml-2 block text-sm text-gray-900 dark:text-gray-100">
+                      In Home
+                    </label>
+                  </div>
+                  <div className="flex items-center">
+                    <input
+                      type="checkbox"
+                      id="telehealth"
+                      value="Telehealth"
+                      {...register('service_preference')}
+                      className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                    />
+                    <label htmlFor="telehealth" className="ml-2 block text-sm text-gray-900 dark:text-gray-100">
+                      Telehealth
+                    </label>
+                  </div>
+                </div>
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                   Insurance Provider
                 </label>
                 <input
@@ -573,61 +692,6 @@ export default function ClientOnboarding({ onComplete }: ClientOnboardingProps) 
                   {...register('insurance_info.provider')}
                   className="w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:bg-dark dark:text-gray-200"
                 />
-              </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Referral Source
-                </label>
-                <input
-                  type="text"
-                  {...register('referral_source')}
-                  className="w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm focus:border-blue-500 focus:ring-blue-500 dark:bg-dark dark:text-gray-200"
-                />
-              </div>
-            </div>
-            
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Service Preferences
-              </label>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="flex items-center">
-                  <input
-                    type="checkbox"
-                    id="in_clinic"
-                    value="In clinic"
-                    {...register('service_preference')}
-                    className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-                  />
-                  <label htmlFor="in_clinic" className="ml-2 block text-sm text-gray-900 dark:text-gray-100">
-                    In Clinic
-                  </label>
-                </div>
-                <div className="flex items-center">
-                  <input
-                    type="checkbox"
-                    id="in_home"
-                    value="In home"
-                    {...register('service_preference')}
-                    className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-                  />
-                  <label htmlFor="in_home" className="ml-2 block text-sm text-gray-900 dark:text-gray-100">
-                    In Home
-                  </label>
-                </div>
-                <div className="flex items-center">
-                  <input
-                    type="checkbox"
-                    id="telehealth"
-                    value="Telehealth"
-                    {...register('service_preference')}
-                    className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-                  />
-                  <label htmlFor="telehealth" className="ml-2 block text-sm text-gray-900 dark:text-gray-100">
-                    Telehealth
-                  </label>
-                </div>
               </div>
             </div>
             
@@ -814,8 +878,8 @@ export default function ClientOnboarding({ onComplete }: ClientOnboardingProps) 
                 <input
                   id="consent"
                   type="checkbox"
+                  defaultChecked={true}
                   className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-                  required
                 />
               </div>
               <div className="ml-3 text-sm">
@@ -842,36 +906,16 @@ export default function ClientOnboarding({ onComplete }: ClientOnboardingProps) 
       <div className="bg-white dark:bg-dark-lighter shadow rounded-lg p-6 mb-6">
         <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-6">Client Onboarding</h1>
         
-        {/* Progress Steps */}
-        <div className="mb-8">
-          <div className="flex items-center justify-between">
-            {[1, 2, 3, 4, 5].map(step => (
-              <div 
-                key={step}
-                className={`flex items-center justify-center w-10 h-10 rounded-full ${
-                  step < currentStep
-                    ? 'bg-blue-600 text-white'
-                    : step === currentStep
-                      ? 'bg-blue-100 dark:bg-blue-900/20 text-blue-800 dark:text-blue-200 border-2 border-blue-600'
-                      : 'bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400'
-                }`}
-              >
-                {step < currentStep ? (
-                  <CheckCircle className="w-6 h-6" />
-                ) : (
-                  <span>{step}</span>
-                )}
-              </div>
-            ))}
-          </div>
-          <div className="flex justify-between mt-2 text-xs text-gray-500 dark:text-gray-400">
-            <span>Basic Info</span>
-            <span>Parent/Guardian</span>
-            <span>Address</span>
-            <span>Services</span>
-            <span>Documents</span>
-          </div>
-        </div>
+        <OnboardingSteps
+          labels={[
+            'Basic Info',
+            'Parent/Guardian',
+            'Address',
+            'Services',
+            'Documents',
+          ]}
+          currentStep={currentStep}
+        />
         
         <form onSubmit={handleSubmit(handleFormSubmit)}>
           {renderStepContent()}
@@ -891,7 +935,8 @@ export default function ClientOnboarding({ onComplete }: ClientOnboardingProps) 
               <button
                 type="button"
                 onClick={nextStep}
-                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 border border-transparent rounded-md shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 flex items-center"
+                disabled={emailValidationError !== ''}
+                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 border border-transparent rounded-md shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed flex items-center"
               >
                 Next
                 <ArrowRight className="w-4 h-4 ml-2" />
@@ -899,8 +944,8 @@ export default function ClientOnboarding({ onComplete }: ClientOnboardingProps) 
             ) : (
               <button
                 type="submit"
-                disabled={isSubmitting}
-                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 border border-transparent rounded-md shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 flex items-center"
+                disabled={isSubmitting || emailValidationError !== '' || isValidatingEmail}
+                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 border border-transparent rounded-md shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed flex items-center"
               >
                 {isSubmitting ? (
                   <>

@@ -106,8 +106,8 @@ const calculateCompatibilityScore = memoize(
     
     const commonServices = clientServices.filter(service => 
       therapistServices.includes(service)
-    );
-    
+  );
+
     if (commonServices.length === 0) return 0;
     
     score += (commonServices.length / Math.max(clientServices.length, therapistServices.length)) * 0.4;
@@ -123,7 +123,7 @@ const calculateCompatibilityScore = memoize(
     );
     
     if (specialtyMatch) score += 0.3;
-    
+  
     // Language compatibility
     if (therapist.languages?.includes(client.preferred_language || 'English')) {
       score += 0.2;
